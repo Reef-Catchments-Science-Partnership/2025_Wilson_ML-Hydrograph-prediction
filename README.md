@@ -7,7 +7,7 @@ The timing of sample collection in water quality monitoring programs substantial
 # Data Availablity 
 Data used in this study was accessed from the Queensland Government's Water Monitoring Information Portal https://water-monitoring.information.qld.gov.au/
 
-Sites that were used in this study were as follows: 
+Sites and variables that were used in this study are as follows: 
 ## 113006A Tully River at Euramo
 - Discharge
 - River Height
