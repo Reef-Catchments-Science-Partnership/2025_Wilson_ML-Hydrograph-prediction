@@ -1,60 +1,74 @@
+
 library(dplyr)
 library(ggplot2)
-library(lubridate)
-library(patchwork)
 
-make_plot <- function(t0, label) {
-  start <- t0 - days(1)
-  end   <- t0 + days(6)
-  
-  sum_by_h <- results_wide %>%
-    filter(horizon %in% horizons,
-           time >= start, time <= end) %>%
-    group_by(horizon) %>%
-    summarise(
-      Pred_mean   = mean(Predicted,  na.rm = TRUE),
-      Actual_mean = mean(Actual,     na.rm = TRUE),
-      CI_low_mean  = mean(CI_low_95,  na.rm = TRUE),
-      CI_high_mean = mean(CI_high_95, na.rm = TRUE),
-      .groups = "drop"
-    ) %>%
-    arrange(as.numeric(horizon))
-  
-  ggplot(sum_by_h, aes(x = as.numeric(horizon))) +
-    geom_ribbon(aes(ymin = CI_low_mean, ymax = CI_high_mean, fill = "95% CI"), alpha = 0.3) +
-    geom_line(aes(y = Pred_mean, color = "Predicted"), linewidth = 1.5) +
-    geom_point(aes(y = Pred_mean, color = "Predicted"), size = 2) +
-    geom_line(aes(y = Actual_mean, color = "Observed"), linewidth = 1.5) +
-    geom_point(aes(y = Actual_mean, color = "Observed"), size = 2) +
-    scale_x_continuous(breaks = horizons) +
-    scale_y_continuous(limits = c(0, 9)) +
-    scale_color_manual(name = NULL, values = c("Predicted" = "orange", "Observed" = "black")) +
-    scale_fill_manual(name = NULL, values = c("95% CI" = "grey70")) +
-    labs(x = "Forecast Horizon (Hour)", y = "River Level (m)") +
-    annotate("text", x = -1, y = 9, label = label, hjust = 0, vjust = 1, size = 12 / .pt) +
-    theme_minimal(base_size = 14) +
-    theme(
-      panel.grid.major = element_blank(),
-      panel.grid.minor = element_blank(),
-      legend.position = "none", # hide duplicate legends
-      legend.text = element_text(size = 10)
-    )
-}
+results_wide <- read.csv("results_wide.csv")
+fdc <- read.csv("EuramoFDC.CSV", skip = 6)
+
+breaks <- c(0, 5, 20, 80, Inf)
+labels <- c("a) Extreme (95-100th Percentile)", 
+            "b) High (80-95th Percentile)", 
+            "c) Moderate (20-80th Percentile)", 
+            "d) Low (0-20th Percentile)")
+
+# Optional: custom labels for the ranges
 
 # horizons to show
 horizons <- c(1, 2, 3, 4, 5, 6, 12, 24, 48)
 
-# define t0 for each case (replace with your chosen percentile times)
-t0_5   <- as.POSIXct("2021-12-16 19:00:00")  # 5th percentile event
-t0_50  <- as.POSIXct("2024-01-09 04:00:00")  # median event
-t0_95  <- as.POSIXct("2023-12-14 18:00:00")  # 95th percentile event
+data.frame(breaks = 100-breaks, Height = spline(fdc$X., fdc$Total, xout = breaks)$y)
 
-# make three plots
-p1 <- make_plot(t0_5,  "a) 5th Percentile")
-p2 <- make_plot(t0_50, "b) Median")
-p3 <- make_plot(t0_95, "c) 95th Percentile")
+sum_by_h <- results_wide %>% mutate(fdc = spline(fdc$Total, fdc$X., xout = Actual)$y)  %>%
+  mutate(value_range = cut(fdc, breaks = breaks, labels = labels, right = FALSE)) %>%
+  mutate(Residual = Actual - Predicted) %>%
+  mutate(CI_low_95 = Actual - CI_low_95) %>%
+  mutate(CI_high_95 = Actual - CI_high_95) %>%
+  group_by(value_range, horizon) %>%
+  summarise(
+    Residual   = mean(Residual,  na.rm = TRUE),
+    CI_low_mean  = mean(CI_low_95,  na.rm = TRUE),
+    CI_high_mean = mean(CI_high_95, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  arrange(as.numeric(horizon))
 
-# stack them vertically
-final_plot <- p1 / p2 / p3
 
-final_plot
+facet_labels <- setNames(
+  paste0(letters[1:4], ") "),   # "a) ", "b) ", "c) ", "d) "
+  unique(sum_by_h$value_range)  # original facet levels
+)
+
+
+ggplot(sum_by_h, aes(x = as.numeric(horizon))) +
+  geom_ribbon(aes(ymin = CI_low_mean, ymax = CI_high_mean, fill = "95% CI"), alpha = 0.3) +
+
+  geom_line(aes(y = Residual, color = "Predicted"), linewidth = 1.5) +
+  geom_point(aes(y = Residual, color = "Predicted"), size = 2) +
+  geom_hline(yintercept = 0) +
+  
+  #geom_line(aes(y = Actual_mean, color = "Observed"), linewidth = 1.5) +
+  #geom_point(aes(y = Actual_mean, color = "Observed"), size = 2) +
+  scale_x_log10(
+    breaks = horizons,
+    labels = horizons
+  ) +
+  #scale_y_continuous(limits = c(0, 9)) +
+  scale_color_manual(name = NULL, values = c("Predicted" = "orange", "Observed" = "black")) +
+  scale_fill_manual(name = NULL, values = c("95% CI" = "grey70")) +
+  labs(x = "Forecast Horizon (Hour)", y = "Residual (Observed - Predicted) (m)") +
+
+  theme_minimal(base_size = 14) +
+  theme(
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    legend.position = "top", # hide duplicate legends
+    legend.text = element_text(size = 10),
+    axis.title = element_text(size=11)
+  ) +
+  facet_wrap(~value_range, ncol = 1,strip.position = "top") +
+  theme(strip.text = element_text(hjust = 0))
+
+ggsave("residuals.png", width = 7.5, height = 8, dpi = 600)
+
+
+
